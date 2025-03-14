@@ -1,64 +1,187 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import bookingService from '../../services/bookingService';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useBookings } from '../../hooks/useBookings';
+import { formatDate, formatCurrency } from '../../utils/formatters';
+import Pagination from '../../components/common/Pagination';
+import FilterControls from '../../components/common/FilterControls';
+import BookingStatusBadge from '../../components/common/BookingStatusBadge';
+import EmptyState from '../../components/common/EmptyState';
 import Loader from '../../components/common/Loader';
-import './BookingStyles.css';
+import './BookingHistory.scss';
 
 const BookingHistory = () => {
-  const [bookings, setBookings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [sortBy, setSortBy] = useState('-createdAt');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const {
+    bookings,
+    totalPages,
+    isLoading,
+    error,
+    refreshBookings,
+    cancelBooking
+  } = useBookings(currentPage, 10, sortBy, statusFilter, searchQuery);
 
-  useEffect(() => {
-    const fetchBookings = async () => {
-      try {
-        const data = await bookingService.getBookings();
-        setBookings(data);
-        setError('');
-      } catch (err) {
-        setError(err.response?.data?.error || 'Failed to fetch bookings');
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchBookings();
+  const handleSearch = useCallback((query) => {
+    setSearchQuery(query);
+    setCurrentPage(1);
   }, []);
 
-  if (loading) return <Loader />;
+  const handleStatusFilter = (status) => {
+    setStatusFilter(status);
+    setCurrentPage(1);
+  };
+
+  const handleSortChange = (sortValue) => {
+    setSortBy(sortValue);
+    setCurrentPage(1);
+  };
+
+  const handlePageChange = (newPage) => {
+    setCurrentPage(newPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  if (isLoading && currentPage === 1) return <Loader fullPage />;
 
   return (
-    <div className="booking-container">
-      <h2>Your Ride History</h2>
-      {error && <div className="error-message">{error}</div>}
-      
-      <div className="booking-list">
-        {bookings.length === 0 ? (
-          <div className="empty-state">
-            <p>No bookings found</p>
-            <Link to="/new-booking" className="btn-primary">
-              Book a Ride Now
-            </Link>
-          </div>
-        ) : (
-          bookings.map((booking) => (
-            <div key={booking._id} className="booking-card">
-              <div className="booking-info">
-                <h4>Booking #{booking._id.slice(-6)}</h4>
-                <p><strong>From:</strong> {booking.pickupLocation}</p>
-                <p><strong>To:</strong> {booking.dropoffLocation}</p>
-                <p className={`status ${booking.status}`}>{booking.status}</p>
-              </div>
-              <div className="booking-meta">
-                <p>{new Date(booking.createdAt).toLocaleDateString()}</p>
-                <Link to={`/bookings/${booking._id}`} className="btn-secondary">
-                  View Details
-                </Link>
-              </div>
-            </div>
-          ))
-        )}
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="booking-history"
+    >
+      <div className="header-section">
+        <h1>Your Ride History</h1>
+        <div className="controls">
+          <FilterControls
+            onSearch={handleSearch}
+            onFilterChange={handleStatusFilter}
+            onSortChange={handleSortChange}
+            filterOptions={[
+              { value: 'all', label: 'All Statuses' },
+              { value: 'confirmed', label: 'Confirmed' },
+              { value: 'completed', label: 'Completed' },
+              { value: 'cancelled', label: 'Cancelled' }
+            ]}
+            sortOptions={[
+              { value: '-createdAt', label: 'Newest First' },
+              { value: 'createdAt', label: 'Oldest First' },
+              { value: '-date', label: 'Ride Date' }
+            ]}
+          />
+          <button
+            onClick={refreshBookings}
+            className="refresh-button"
+            aria-label="Refresh bookings"
+          >
+            ↻ Refresh
+          </button>
+        </div>
       </div>
-    </div>
+
+      {error && (
+        <div className="error-banner">
+          {error} <button onClick={refreshBookings}>Retry</button>
+        </div>
+      )}
+
+      <div className="booking-list-container">
+        <AnimatePresence initial={false}>
+          {bookings.length === 0 ? (
+            <EmptyState
+              title="No bookings found"
+              message="You haven't made any bookings yet"
+              action={
+                <Link to="/new-booking" className="cta-button">
+                  Book Your First Ride
+                </Link>
+              }
+            />
+          ) : (
+            <>
+              <div className="booking-list-header">
+                <span>Ride Details</span>
+                <span>Status</span>
+                <span>Date</span>
+                <span>Amount</span>
+                <span>Actions</span>
+              </div>
+
+              <div className="booking-list">
+                <AnimatePresence initial={false}>
+                  {bookings.map((booking) => (
+                    <motion.div
+                      key={booking._id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="booking-card"
+                    >
+                      <div className="ride-details">
+                        <div className="locations">
+                          <span className="from">
+                            🚩 {booking.pickupLocation}
+                          </span>
+                          <span className="to">
+                            🏁 {booking.dropoffLocation}
+                          </span>
+                        </div>
+                        <div className="vehicle-type">
+                          {booking.vehicleType?.toUpperCase()}
+                        </div>
+                      </div>
+
+                      <div className="status">
+                        <BookingStatusBadge status={booking.status} />
+                      </div>
+
+                      <div className="date">
+                        {formatDate(booking.scheduledTime)}
+                      </div>
+
+                      <div className="amount">
+                        {formatCurrency(booking.finalAmount)}
+                      </div>
+
+                      <div className="actions">
+                        <Link
+                          to={`/bookings/${booking._id}`}
+                          className="detail-button"
+                          aria-label={`View details of booking ${booking._id}`}
+                        >
+                          View
+                        </Link>
+                        {booking.status === 'confirmed' && (
+                          <button
+                            onClick={() => cancelBooking(booking._id)}
+                            className="cancel-button"
+                            aria-label={`Cancel booking ${booking._id}`}
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            </>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {totalPages > 1 && (
+        <Pagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={handlePageChange}
+        />
+      )}
+    </motion.div>
   );
 };
 
